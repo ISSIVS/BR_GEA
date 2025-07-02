@@ -1,111 +1,100 @@
-const http = require("http");
-fs = require("fs");
+require('dotenv').config();
 const request = require("request");
-const config = require("./config");
 
-var username = config.restapi_user;
-var password = config.restapi_pass;
-
-//////////////////////////////////////////////
-//EDIT FOR EACH EVENT SUBSCRIPTION
-var events = [
-    {
-     	type: "CAM",
-    },
-    {
-        type: "FACE_X_SERVER",
-        action:"MATCH"
-    },
-    {
-        type: "HTTP_EVENT_PROXY",
-    },
-    {
-        type: "LPR_CAM",
-        action: "CAR_LP_RECOGNIZED"
-    }
-];
-/////////////////////////////////////////////
-
-var options = {
-    url: `http://${config.ip}:${config.restapi_port}/api/v1/events/subscriptions/`,
-    auth: {
-        username: config.restapi_user,
-        password: config.restapi_pass,
-    },
-};
-
-//GET ACTUAL SUBSCRIPTIONS
-request.get(options, (err, res, body) => {
-    if (err) {
-        console.log(err);
-        console.log("fail request get");
-        return;
-    }
-    var json = JSON.parse(body);
-    if (json.data.length > 0) {
-        for (var p in json.data) {
-            if (json.data[p].callback == `http://${config.ip}:${config.serverPort}/events`) {
-                deleteEvents(json.data[p].id);
-                console.log("deleting...", json.data[p].id);
-            }
+function subscribeToEvents() {
+    const events = [
+        {
+            type: "CAM",
+            action: "VCA_EVENT_SEGER"
         }
-    } else {
-        console.log("Nothing to delete");
-    }
-    createSubscription();
-});
-////////////////////////////////////////////////////
-//DELETE ACTUAL
-function deleteEvents(id) {
-    console.log("Deleting record");
-    var optionsDelete = {
-        url: `http://${config.ip}:${config.restapi_port}/api/v1/events/subscriptions/${id}`,
+    ];
+
+    const ip = process.env.SECUROS_SERVER_IP;
+    const port = process.env.SERVER_PORT;
+
+    const restApiUser = process.env.REST_API_USER;
+    const restApiPass = process.env.REST_API_PASS;
+    const restApiPort = process.env.REST_API_PORT;
+
+    const options = {
+        url: `http://${ip}:${restApiPort}/api/v1/events/subscriptions/`,
         auth: {
-            username: config.restapi_user,
-            password: config.restapi_pass,
+            username: restApiUser,
+            password: restApiPass,
         },
     };
-    request.delete(optionsDelete, (err, res, body) => {
+
+    // GET existing subscriptions
+    request.get(options, (err, res, body) => {
         if (err) {
-            console.log(err);
-            console.log("fail request post");
+            console.error("GET subscription error:", err);
             return;
         }
-        console.log(JSON.parse(body));
+
+        let json;
+        try {
+            json = JSON.parse(body);
+        } catch (parseErr) {
+            console.error("Invalid JSON response:", parseErr);
+            return;
+        }
+
+        if (json.data.length > 0) {
+            for (const subscription of json.data) {
+                if (subscription.callback === `http://${ip}:${port}/events`) {
+                    deleteEvent(subscription.id);
+                    console.log("Deleting existing subscription:", subscription.id);
+                }
+            }
+        } else {
+            console.log("No subscriptions to delete.");
+        }
+
+        createSubscriptions();
     });
-}
-//////////////////////////////////////////////
-//CREATE NEW SUBSCRIPTIONS
-//////////////////////////////////////////////
-function createSubscription() {
-    for (var p in events) {
-        console.log("Creating subscription..." + events[p].type);
-        options.json = {
-            callback: "http://" + config.ip + ":" + config.serverPort + "/events",
-            filter: {
-                type: events[p].type,
-                action: events[p].action,
+
+    function deleteEvent(id) {
+        const optionsDelete = {
+            url: `http://${ip}:${restApiPort}/api/v1/events/subscriptions/${id}`,
+            auth: {
+                username: restApiUser,
+                password: restApiPass,
             },
         };
-        console.log(options);
 
-        request.post(options, (err, res, body) => {
+        request.delete(optionsDelete, (err, res, body) => {
             if (err) {
-                console.log(err);
-                console.log("fail request post");
+                console.error("DELETE subscription error:", err);
                 return;
             }
-            console.log(body);
-        });
-
-        request.get(options, (err, res, body) => {
-            if (err) {
-                console.log(err);
-                console.log("fail request get");
-                return;
-            }
-            //var json = JSON.parse(body)
-            console.log(body);
+            console.log("Deleted:", body);
         });
     }
+
+    function createSubscriptions() {
+        for (const ev of events) {
+            const postOptions = {
+                ...options,
+                json: {
+                    callback: `http://${ip}:${port}/events`,
+                    filter: {
+                        type: ev.type,
+                        action: ev.action,
+                    },
+                },
+            };
+
+            console.log("Creating subscription for:", ev);
+
+            request.post(postOptions, (err, res, body) => {
+                if (err) {
+                    console.error("POST subscription error:", err);
+                    return;
+                }
+                console.log("Subscription created:", body);
+            });
+        }
+    }
 }
+
+module.exports = { subscribeToEvents };

@@ -7,13 +7,12 @@ const server = http.createServer(app);
 port = 3016;
 
 //middlewares
-app.use(express.urlencoded({extended:false}))
+app.use(express.urlencoded({ extended: false }))
 app.use(express.json());
-//routes
-app.use(require('./routes/api'))
+//routes 
+app.use(require('./IntegrationServer/routes/api'))
 
 //server is listenning
-server.listen(port, function(){
-console.log("Server init at ",port )
-
+server.listen(port, function () {
+    console.log("Server init at ", port)
 });

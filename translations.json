@@ -9,6 +9,7 @@
         "REC": "Câmera gravando",
         "REC_ERROR": "Erro de gravação da câmera",
         "REC_STOP": "Câmera parou gravação",
+        "VCA_EVENT_SEGER": "Evento de analítico de vídeo",
         "VCA_EVENT": {
             "description": "Evento de analítico de vídeo"
         },

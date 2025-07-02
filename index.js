@@ -1,3 +1,4 @@
+require('dotenv').config();
 var express = require("express");
 var app = express();
 var http = require("http");
@@ -5,37 +6,33 @@ var server = http.createServer(app);
 var bodyParser = require("body-parser");
 var path = require("path");
 var io = require("socket.io")(server);
-var cron = require("node-cron");
-const configuration = require("./config");
-const http_modules = require("./js/pg");
 const message = require("./js/messages");
 const restapi = require("./js/restapi");
 const integrationServer = require("./js/integrationserver");
 const logs = require("./js/logs/logs");
-const moment = require("./www/js/moment");
 const classificationJSON = require("./translations.json");
+const cors = require('cors')
+const { subscribeToEvents } = require('./register.js');
+subscribeToEvents();
+
 const log_base_path = "GEA";
 var startDateTime, endDateTime;
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "www")));
-app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "origin-list");
-    res.setHeader("Access-Control-Allow-Origin", "http://192.168.10.33:21093/v1/spotter/person/1");
-    res.header(
-        "Access-Control-Allow-Headers",
-        "Authorization, X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Allow-Request-Method"
-    );
-    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE");
-    res.header("Allow", "GET, POST, OPTIONS, PUT, DELETE");
-    next();
-});
+app.use(cors());
+
+const ip = process.env.SECUROS_SERVER_IP;
+const port = process.env.SERVER_PORT;
+const integrationPort = process.env.INTEGRATION_PORT;
+
+const restApiUser = process.env.SECUROS_SERVER_IP;
+const restApiPass = process.env.SECUROS_SERVER_IP;
+const restApiPort = process.env.SECUROS_SERVER_IP;
 
 // ---- START UP SERVER -----
-var port = configuration.serverPort;
-
-var intServer = new integrationServer.integrationServer(configuration.ip, configuration.integrationPort);
+var intServer = new integrationServer.integrationServer(ip, integrationPort);
 
 server.listen(port || 3000, () => {
     console.log(`listening on *: ${port}`);
@@ -57,17 +54,12 @@ app.post("/events", function (req, res) {
         if (req.body[0]) {
             logs.Write(`Event Received : ${JSON.stringify(req.body[0])}`, "DEBUG", log_base_path);
 
-            const type = req.body[0].type;
-            const action = req.body[0].action;
-            const incident = classifyEvent(req.body[0]) || req.body[0].action;
-
-            // console.log("Classification Result", incident);
-            // logs.Write(`Classification Result : ${incident}`, "DEBUG", log_base_path);
+            const incident = req.body[0].params.action || classifyEvent(req.body[0]);
 
             req.body[0].object_id = req.body[0].id;
             req.body[0].state = "Novo";
             req.body[0].params = JSON.stringify(req.body[0].params);
-            req.body[0].incident = incident || action;
+            req.body[0].incident = incident;
             logs.Write(`Event Received : ${JSON.stringify(req.body[0].params.comment)}`, "INFO", log_base_path);
             delete req.body[0].id;
 
@@ -103,9 +95,9 @@ app.post("/events", function (req, res) {
     } catch (e) {
         console.log(e);
         logs.Write("ERROR: " + e, "ERROR", log_base_path);
+    } finally {
+        res.send("ok");
     }
-
-    res.send("ok");
 });
 
 //socket io connection
@@ -204,7 +196,7 @@ function getObject(body, callback) {
 }
 
 function getCameras(callback) {
-    var rest = new restapi.restapi(configuration.ip, configuration.restapi_port, configuration.restapi_user, configuration.restapi_pass);
+    var rest = new restapi.restapi(ip, restApiPort, restApiUser, restApiPass);
     rest.getRequest("api/v1/cameras", function (res) {
         callback(res);
     });
