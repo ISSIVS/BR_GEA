@@ -1,111 +1,114 @@
 const http = require("http");
-fs = require("fs");
+const fs = require("fs"); 
 const request = require("request");
 const config = require("./config");
 
-var username = config.restapi_user;
-var password = config.restapi_pass;
+const baseUrl = `http://${config.ip}:${config.restapi_port}`;
+const callbackUrl = `http://${config.ip}:${config.serverPort}/events`;
 
-//////////////////////////////////////////////
-//EDIT FOR EACH EVENT SUBSCRIPTION
-var events = [
-    {
-     	type: "CAM",
-    },
-    {
-        type: "FACE_X_SERVER",
-        action:"MATCH"
-    },
-    {
-        type: "HTTP_EVENT_PROXY",
-    },
-    {
-        type: "LPR_CAM",
-        action: "CAR_LP_RECOGNIZED"
-    }
+const events = [
+  { type: "CAM" },
+  { type: "FACE_X_SERVER", action: "MATCH" },
+  { type: "HTTP_EVENT_PROXY" },
+  { type: "LPR_CAM", action: "CAR_LP_RECOGNIZED" },
 ];
-/////////////////////////////////////////////
 
-var options = {
-    url: `http://${config.ip}:${config.restapi_port}/api/v1/events/subscriptions/`,
-    auth: {
-        username: config.restapi_user,
-        password: config.restapi_pass,
-    },
-};
+function safeParseJSON(text) {
+  if (!text || typeof text !== "string") return null;
+  try { return JSON.parse(text); } catch { return null; }
+}
 
-//GET ACTUAL SUBSCRIPTIONS
-request.get(options, (err, res, body) => {
-    if (err) {
-        console.log(err);
-        console.log("fail request get");
-        return;
+function getSubscriptions(cb) {
+  const opts = {
+    url: `${baseUrl}/api/v1/events/subscriptions/`,
+    auth: { username: config.restapi_user, password: config.restapi_pass },
+    timeout: 10000,
+  };
+  request.get(opts, (err, res, body) => {
+    if (err) return cb(err);
+    if (!res || res.statusCode < 200 || res.statusCode >= 300) {
+      return cb(new Error(`GET subscriptions failed: ${res?.statusCode} ${body || ""}`));
     }
-    var json = JSON.parse(body);
-    if (json.data.length > 0) {
-        for (var p in json.data) {
-            if (json.data[p].callback == `http://${config.ip}:${config.serverPort}/events`) {
-                deleteEvents(json.data[p].id);
-                console.log("deleting...", json.data[p].id);
-            }
-        }
-    } else {
-        console.log("Nothing to delete");
+    const json = safeParseJSON(body);
+    if (!json || !Array.isArray(json.data)) {
+      return cb(new Error(`Unexpected response (not JSON with .data): ${body || "<empty>"}`));
     }
-    createSubscription();
-});
-////////////////////////////////////////////////////
-//DELETE ACTUAL
-function deleteEvents(id) {
-    console.log("Deleting record");
-    var optionsDelete = {
-        url: `http://${config.ip}:${config.restapi_port}/api/v1/events/subscriptions/${id}`,
-        auth: {
-            username: config.restapi_user,
-            password: config.restapi_pass,
-        },
-    };
-    request.delete(optionsDelete, (err, res, body) => {
-        if (err) {
-            console.log(err);
-            console.log("fail request post");
-            return;
-        }
-        console.log(JSON.parse(body));
+    cb(null, json.data);
+  });
+}
+
+function deleteSubscription(id, cb) {
+  const opts = {
+    url: `${baseUrl}/api/v1/events/subscriptions/${id}`,
+    auth: { username: config.restapi_user, password: config.restapi_pass },
+    timeout: 10000,
+  };
+  request.delete(opts, (err, res, body) => {
+    if (err) return cb(err);
+    if (!res || res.statusCode < 200 || res.statusCode >= 300) {
+      return cb(new Error(`DELETE ${id} failed: ${res?.statusCode} ${body || ""}`));
+    }
+    cb(null, true);
+  });
+}
+
+function createSubscriptionFor(filter, cb) {
+  const opts = {
+    url: `${baseUrl}/api/v1/events/subscriptions/`,
+    auth: { username: config.restapi_user, password: config.restapi_pass },
+    json: { callback: callbackUrl, filter }, 
+    timeout: 10000,
+  };
+  request.post(opts, (err, res, body) => {
+    if (err) return cb(err);
+    if (!res || res.statusCode < 200 || res.statusCode >= 300) {
+      return cb(new Error(`POST failed: ${res?.statusCode} ${typeof body === "string" ? body : JSON.stringify(body)}`));
+    }
+    cb(null, body);
+  });
+}
+
+// Orchestrate:
+getSubscriptions((err, list) => {
+  if (err) {
+    console.error(err.message);
+    return;
+  }
+
+  const mine = list.filter(s => s.callback === callbackUrl);
+  if (mine.length === 0) {
+    console.log("Nothing to delete");
+    afterDeletes();
+    return;
+  }
+
+  let pending = mine.length;
+  mine.forEach(s => {
+    console.log("Deleting…", s.id);
+    deleteSubscription(s.id, (derr) => {
+      if (derr) console.error(`Delete ${s.id} error:`, derr.message);
+      if (--pending === 0) afterDeletes();
     });
-}
-//////////////////////////////////////////////
-//CREATE NEW SUBSCRIPTIONS
-//////////////////////////////////////////////
-function createSubscription() {
-    for (var p in events) {
-        console.log("Creating subscription..." + events[p].type);
-        options.json = {
-            callback: "http://" + config.ip + ":" + config.serverPort + "/events",
-            filter: {
-                type: events[p].type,
-                action: events[p].action,
-            },
-        };
-        console.log(options);
+  });
 
-        request.post(options, (err, res, body) => {
-            if (err) {
-                console.log(err);
-                console.log("fail request post");
-                return;
-            }
-            console.log(body);
-        });
+  function afterDeletes() {
+    (function next(i = 0) {
+      if (i >= events.length) {
+        console.log("All subscriptions created.");
+        return;
+      }
+      const filter = { type: events[i].type };
+      if (events[i].action) filter.action = events[i].action;
 
-        request.get(options, (err, res, body) => {
-            if (err) {
-                console.log(err);
-                console.log("fail request get");
-                return;
-            }
-            //var json = JSON.parse(body)
-            console.log(body);
-        });
-    }
-}
+      console.log("Creating subscription…", filter);
+      createSubscriptionFor(filter, (cerr, resp) => {
+        if (cerr) {
+          console.error("Create failed:", cerr.message);
+        } else {
+          console.log("Created:", resp);
+        }
+        next(i + 1);
+      });
+    })();
+  }
+});

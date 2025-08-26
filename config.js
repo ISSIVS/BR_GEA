@@ -4,8 +4,8 @@
 var Securos_Server_IP = "localhost";//"10.62.112.20";
 //Rest Api credentials 
 var RestApi_port = '8888';
-var RestApi_user = 'Admin';
-var RestApi_pass = '123';
+var RestApi_user = 'adm';
+var RestApi_pass = 'adm';
 
 var mailfrom = "";
 var mail_user = "";
