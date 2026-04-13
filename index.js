@@ -38,7 +38,8 @@ try {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
+app.options('*', cors({ origin: true, credentials: true })); // preflight para todos os endpoints
 app.use(express.json({ limit: "50mb" }));
 
 const pool = new Pool({ connectionString: process.env.DB_CONNECTION_STRING });
@@ -159,14 +160,18 @@ app.post("/api/admin/settings", async (req, res, next) => {
     try {
         const { key, value } = req.body;
         if (!key) return res.status(400).json({ error: "Key is required" });
-        
+
+        // Serializa para JSON válido antes de inserir na coluna JSONB
+        const jsonValue = JSON.stringify(value);
+
         await pool.query(
             `INSERT INTO public.app_settings (key, value) VALUES ($1, $2)
-             ON CONFLICT (key) DO UPDATE SET value = $2`,
-            [key, value]
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+            [key, jsonValue]
         );
         res.json({ status: "success" });
     } catch (e) {
+        console.error("[settings] Erro ao salvar:", e.message);
         next(e);
     }
 });
@@ -193,7 +198,7 @@ app.post("/api/admin/upload-audio", async (req, res, next) => {
         
         fs.writeFileSync(filePath, base64Data, 'base64');
         
-        res.json({ status: "success", url: "/uploads/alert.mp3", timestamp: Date.now() });
+        res.json({ status: "success", url: "/uploads/alert.mp3" });
     } catch (e) {
         next(e);
     }
@@ -201,6 +206,11 @@ app.post("/api/admin/upload-audio", async (req, res, next) => {
 
 // Serve uploads
 app.use('/uploads', express.static(uploadsDir));
+
+// Camera names cache endpoint
+app.get("/api/cameras", (req, res) => {
+    res.json({ status: "success", data: cameraNamesCache });
+});
 
 // 1) Callback
 app.post("/events", async (req, res, next) => {

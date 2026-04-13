@@ -23,28 +23,6 @@ const images = ref({ detected: null, db: null, loading: false });
 const selectedState = ref(props.row.state || "Novo");
 const mediaClientId = "10"
 
-// Estados para as abas
-const activeTab = ref('details'); // 'details' | 'settings'
-const audioEnabled = ref(false);
-const selectedAudio = ref(null);
-
-const handleFileUpload = (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  // Limite de 2MB
-  if (file.size > 2 * 1024 * 1024) {
-    alert("Arquivo muito grande. Máximo 2MB.");
-    return;
-  }
-
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    selectedAudio.value = e.target.result;
-  };
-  reader.readAsDataURL(file);
-};
-
 const availableStates = [
   "Novo", "Reconhecido", "Em Tratamento", "Solucionado", "Falha de Sistema", "Alarme Falso"
 ];
@@ -55,25 +33,6 @@ const formatDate = (iso) => {
   return new Date(iso).toLocaleString("pt-BR", {
     day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit"
   });
-};
-
-const saveSettings = () => {
-  localStorage.setItem("gea2_audio_enabled", JSON.stringify(audioEnabled.value));
-  if (selectedAudio.value) {
-    localStorage.setItem("gea2_audio_file", selectedAudio.value);
-  }
-  alert("Configurações salvas com sucesso!");
-};
-
-const testAudio = () => {
-  if (!selectedAudio.value) return alert("Nenhum áudio carregado.");
-  
-  try {
-    const audio = new Audio(selectedAudio.value);
-    audio.play().catch(e => alert("Erro playback: " + e.message));
-  } catch(e) {
-    console.error(e);
-  }
 };
 
 const scrollToBottom = () => {
@@ -255,12 +214,6 @@ onMounted(() => {
   const ua = navigator.userAgent.toLowerCase()
   isQtWebEngine.value = ua.includes('qtwebengine')
 
-  // Carregar configurações salvas
-  const savedEnabled = localStorage.getItem("gea2_audio_enabled");
-  if (savedEnabled) audioEnabled.value = JSON.parse(savedEnabled);
-
-  const savedAudio = localStorage.getItem("gea2_audio_file");
-  if (savedAudio) selectedAudio.value = savedAudio;
 });
 
 </script>
@@ -285,28 +238,9 @@ onMounted(() => {
       <button class="dp-btn dp-btn-ghost" @click="$emit('close')" style="padding: 0.4rem 0.8rem;">✕ ESC</button>
     </div>
 
-    <!-- Abas de Navegação -->
-    <div class="dp-tabs">
-      <button 
-        class="dp-tab-btn" 
-        :class="{ active: activeTab === 'details' }" 
-        @click="activeTab = 'details'"
-      >
-        Detalhes
-      </button>
-      <button 
-        class="dp-tab-btn" 
-        :class="{ active: activeTab === 'settings' }" 
-        @click="activeTab = 'settings'"
-      >
-        Configurações
-      </button>
-    </div>
-
     <div class="dp-panel-scroll-area">
 
-      <!-- Conteúdo da Aba: Detalhes -->
-      <div v-if="activeTab === 'details'" style="display: flex; flex-direction: column; flex: 1; height: 100%;">
+      <div style="display: flex; flex-direction: column; flex: 1; height: 100%;">
         <div class="dp-panel-section">
 
           <div v-if="isQtWebEngine" style="display: flex; gap: 1rem;">
@@ -371,77 +305,11 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Conteúdo da Aba: Configurações -->
-      <div v-else-if="activeTab === 'settings'" class="dp-panel-section">
-        <h3 style="margin-top: 0;">Configurações de Alerta</h3>
-        <p style="color: var(--text-muted); font-size: 0.9rem;">Personalize o comportamento de alertas para novos eventos.</p>
-
-        <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem;">
-          
-          <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">
-            <label for="chk-audio" style="font-weight: 500;">Habilitar Alerta Sonoro</label>
-            <input id="chk-audio" type="checkbox" v-model="audioEnabled" style="transform: scale(1.2);">
-          </div>
-
-          <div style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">
-            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem; color: var(--text-muted);">Arquivo de Áudio (.mp3, .wav)</label>
-            
-            <input type="file" accept="audio/*" @change="handleFileUpload" :disabled="!audioEnabled" style="margin-bottom: 0.5rem;" />
-            
-            <div v-if="selectedAudio" style="font-size: 0.8rem; color: var(--primary); margin-top: 5px;">
-              ✔ Áudio personalizado carregado
-            </div>
-          </div>
-
-          <div style="display: flex; gap: 1rem;">
-            <button class="dp-btn dp-btn-ghost" @click="testAudio" :disabled="!audioEnabled || !selectedAudio" style="flex: 1;">
-              🔊 Testar Som
-            </button>
-            <button class="dp-btn dp-btn-primary" @click="saveSettings" style="flex: 1;">
-              💾 Salvar Preferências
-            </button>
-          </div>
-
-        </div>
-      </div>
-
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Tabs Styles */
-.dp-tabs {
-  display: flex;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid var(--border);
-}
-
-.dp-tab-btn {
-  flex: 1;
-  background: none;
-  border: none;
-  padding: 1rem;
-  color: var(--text-muted);
-  font-weight: 600;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-  text-transform: uppercase;
-  font-size: 0.85rem;
-}
-
-.dp-tab-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-main);
-}
-
-.dp-tab-btn.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
-  background: rgba(255, 255, 255, 0.02);
-}
-
 /* Estilo dos Botões Grandes de Vídeo */
 .action-card-btn {
   flex: 1;

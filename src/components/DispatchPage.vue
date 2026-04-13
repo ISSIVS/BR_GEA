@@ -67,25 +67,73 @@ const selectedRow = ref(null);
 
 // Lógica de Destaque
 const highlightedIds = ref([]);
-let isFirstLoad = true;
+// Persiste entre navegações: null = ainda não inicializado, 0+ = maior ID já visto
+const _savedMaxId = sessionStorage.getItem('dispatch_max_id');
+let knownMaxId = _savedMaxId !== null ? parseInt(_savedMaxId) : null;
 
 let debounceTimer = null;
 let pollingInterval = null;
+let isPlayingAlert = false;
 
-const playAlert = () => {
+// Cache de nomes de câmeras { id: name }
+const cameraNames = ref({});
+
+const loadCameraNames = async () => {
   try {
-    const isEnabled = JSON.parse(localStorage.getItem("gea2_audio_enabled") || "false");
-    const audioData = localStorage.getItem("gea2_audio_file"); // Agora é o DataURI do arquivo
-    
-    if (isEnabled && audioData) {
-      console.log(`[Áudio] Tentando reproduzir alerta personalizado.`);
-      // Pequeno delay para garantir que não sobreponha interações
-      setTimeout(() => {
-        const audio = new Audio(audioData);
-        audio.play().catch(e => console.error("Erro ao tocar áudio:", e));
-      }, 500);
-    }
-  } catch (e) { console.error("Erro ao reproduzir alerta:", e); }
+    const res = await fetch(`${API}/api/cameras`);
+    if (!res.ok) return;
+    const json = await res.json();
+    cameraNames.value = json.data || {};
+  } catch (e) {
+    console.error("Erro ao carregar nomes das câmeras:", e);
+  }
+};
+
+const getCameraName = (camId) => {
+  if (!camId) return '-';
+  return cameraNames.value[camId] || camId;
+};
+
+// Cache das configurações de áudio (carregado uma vez no mount)
+const audioSettings = { enabled: false, url: null };
+
+const loadAudioSettings = async () => {
+  try {
+    const res = await fetch(`${API}/api/admin/settings`);
+    if (!res.ok) return;
+    const json = await res.json();
+    audioSettings.enabled = json.data?.audio_enabled === true || json.data?.audio_enabled === 'true';
+    const relativePath = json.data?.audio_file_url || null;
+    // Constrói a URL completa a partir do caminho relativo armazenado
+    audioSettings.url = relativePath ? `${API}${relativePath}?t=${Date.now()}` : null;
+    console.log(`[Áudio] enabled: ${audioSettings.enabled}, url: ${audioSettings.url}`);
+  } catch (e) {
+    console.error("Erro ao carregar configurações de áudio:", e);
+  }
+};
+
+const playAlert = async () => {
+  if (isPlayingAlert) return;
+
+  // Se as configs ainda não carregaram (ex: loadAudioSettings falhou no mount), tenta agora
+  if (audioSettings.url === null) {
+    await loadAudioSettings();
+  }
+
+  if (!audioSettings.enabled || !audioSettings.url) return;
+
+  isPlayingAlert = true;
+  const audio = new Audio(audioSettings.url);
+  const reset = () => { isPlayingAlert = false; };
+  // Segurança: libera a trava após 60s caso os eventos de fim não disparem
+  const safety = setTimeout(reset, 60000);
+  audio.onended = () => { clearTimeout(safety); reset(); };
+  audio.onerror = () => { clearTimeout(safety); reset(); };
+  audio.play().catch(e => {
+    console.error("[Áudio] Erro ao tocar:", e);
+    clearTimeout(safety);
+    reset();
+  });
 };
 
 // --- Carregar Dados ---
@@ -116,33 +164,35 @@ const loadData = async (isBackground = false) => {
     const json = await res.json();
     if (res.ok) {
       const newRows = json.data || [];
-      
-      // Lógica de Flash para novos eventos
-      if (!isFirstLoad) {
-        const currentIds = new Set(rows.value.map(r => r.id));
-        let hasNewItems = false;
-        let newCount = 0;
 
+      // Detecta novos eventos apenas no polling de background (não em recargas por filtro)
+      // knownMaxId === null significa que ainda não houve carga inicial — ignora
+      if (isBackground && knownMaxId !== null) {
+        let newCount = 0;
         newRows.forEach(row => {
-          if (!currentIds.has(row.id)) {
+          if (Number(row.id) > knownMaxId) {
             highlightedIds.value.push(row.id);
-            hasNewItems = true;
             newCount++;
             setTimeout(() => {
               highlightedIds.value = highlightedIds.value.filter(id => id !== row.id);
             }, 2500);
           }
         });
-
-        if (hasNewItems) {
-            console.log(`[Dispatch] ${newCount} novos eventos detectados. Acionando alerta.`);
-            playAlert();
+        if (newCount > 0) {
+          console.log(`[Dispatch] ${newCount} novos eventos detectados. Acionando alerta.`);
+          playAlert();
         }
       }
-      
+
+      // Após qualquer carga bem-sucedida, inicializa knownMaxId (mesmo que não haja eventos)
+      const maxId = newRows.reduce((max, r) => Math.max(max, Number(r.id)), 0);
+      if (knownMaxId === null || maxId > knownMaxId) {
+        knownMaxId = maxId;
+        sessionStorage.setItem('dispatch_max_id', maxId.toString());
+      }
+
       rows.value = newRows;
       pagination.total = Number(json.total || 0);
-      isFirstLoad = false;
     }
   } catch (e) {
     console.error(e);
@@ -320,6 +370,8 @@ watch(() => pagination.offset, loadData);
 onMounted(() => {
   loadData();
   loadMarkers();
+  loadAudioSettings();
+  loadCameraNames();
 
   // Inicia polling se estiver habilitado
   if (isAutoRefresh.value) startPolling();
@@ -440,7 +492,7 @@ onUnmounted(() => {
                 <td>#{{ row.id }}</td>
                 <td><span :class="['prio-badge', `prio-${(row.priority || 'low').toLowerCase()}`]">{{ row.priority || 'Normal' }}</span></td>
                 <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">{{ formatDate(row.time) }}</td>
-                <td style="font-family: 'JetBrains Mono', monospace; color: var(--accent);">{{ row.cam_id || '-' }}</td>
+                <td style="font-family: 'JetBrains Mono', monospace; color: var(--accent);">{{ getCameraName(row.cam_id) }}</td>
                 <td style="font-weight: 500; color: white;">{{ row.name || row.object_id || '-' }}</td>
                 <td>{{ row.type }}</td>
                 <td>{{ row.action }}</td>

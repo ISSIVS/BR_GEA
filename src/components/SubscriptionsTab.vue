@@ -1,49 +1,118 @@
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted } from 'vue';
 import './DispatchPage.css';
 
 const API = import.meta.env.VITE_REST_API_URL;
+const LOCAL_API = import.meta.env.VITE_API_URL;
 
 // --- Estado de Autenticação ---
 const isAuthenticated = ref(false);
 const authLoading = ref(false);
 const authError = ref("");
-const loginForm = reactive({
-  username: "",
-  password: ""
-});
-
-// Credenciais após login
+const loginForm = reactive({ username: "", password: "" });
 const AUTH_HEADER = ref({});
 
-// --- Função de Login ---
+// --- Abas internas ---
+const activeAdminTab = ref('subscriptions');
+
+// --- Configurações de Áudio ---
+const audioEnabled = ref(false);
+const selectedAudio = ref(null); // null | base64 (não salvo) | '/uploads/...' (salvo)
+
+const loadAudioSettings = async () => {
+  try {
+    const res = await fetch(`${LOCAL_API}/api/admin/settings`);
+    if (!res.ok) return;
+    const json = await res.json();
+    if (json.data?.audio_enabled !== undefined) {
+      audioEnabled.value = json.data.audio_enabled === true || json.data.audio_enabled === 'true';
+    }
+    if (json.data?.audio_file_url) {
+      selectedAudio.value = json.data.audio_file_url;
+    }
+  } catch (e) {
+    console.error("Erro ao carregar configurações de áudio:", e);
+  }
+};
+
+const handleFileUpload = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) {
+    alert("Arquivo muito grande. Máximo 2MB.");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => { selectedAudio.value = e.target.result; };
+  reader.readAsDataURL(file);
+};
+
+const saveAudioSettings = async () => {
+  try {
+    // Upload se novo arquivo selecionado (base64)
+    if (selectedAudio.value?.startsWith('data:')) {
+      const uploadRes = await fetch(`${LOCAL_API}/api/admin/upload-audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileData: selectedAudio.value })
+      });
+      if (!uploadRes.ok) throw new Error("Falha no upload do áudio");
+      const { url } = await uploadRes.json();
+      selectedAudio.value = url;
+
+      const urlRes = await fetch(`${LOCAL_API}/api/admin/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'audio_file_url', value: url })
+      });
+      if (!urlRes.ok) throw new Error("Falha ao salvar URL do áudio");
+    }
+
+    const enabledRes = await fetch(`${LOCAL_API}/api/admin/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'audio_enabled', value: audioEnabled.value })
+    });
+    if (!enabledRes.ok) throw new Error("Falha ao salvar configuração de alerta");
+
+    alert("Configurações salvas com sucesso!");
+  } catch (e) {
+    alert("Erro ao salvar: " + e.message);
+  }
+};
+
+const testAudio = () => {
+  if (!selectedAudio.value) return alert("Nenhum áudio configurado.");
+  const url = selectedAudio.value.startsWith('data:')
+    ? selectedAudio.value
+    : `${LOCAL_API}${selectedAudio.value}?t=${Date.now()}`;
+  const audio = new Audio(url);
+  audio.play().catch(e => alert("Erro playback: " + e.message));
+};
+
+// --- Assinaturas ---
+const subs = ref([]);
+const loading = ref(false);
+const editingId = ref(null);
+const form = reactive({ callback: "", type: "", id: "", action: "", priority: "" });
+
+// --- Auth ---
 const handleLogin = async () => {
   if (!loginForm.username || !loginForm.password) {
     authError.value = "Preencha usuário e senha";
     return;
   }
-
   authLoading.value = true;
   authError.value = "";
-
   try {
     const credentials = btoa(`${loginForm.username}:${loginForm.password}`);
     const res = await fetch(`${API}/api/v1/ws_auth`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Basic ${credentials}`
-      }
+      headers: { "Authorization": `Basic ${credentials}` }
     });
-
     if (res.ok) {
-      // Autenticação bem-sucedida
       AUTH_HEADER.value = { "Authorization": `Basic ${credentials}` };
       isAuthenticated.value = true;
-
-      // Salvar na sessão (opcional)
       sessionStorage.setItem("gea_auth", credentials);
-
-      // Carregar assinaturas após login
       loadSubs();
     } else if (res.status === 401) {
       authError.value = "Usuário ou senha incorretos";
@@ -52,13 +121,11 @@ const handleLogin = async () => {
     }
   } catch (e) {
     authError.value = "Erro de conexão com o servidor";
-    console.error("Erro de autenticação:", e);
   } finally {
     authLoading.value = false;
   }
 };
 
-// --- Logout ---
 const handleLogout = () => {
   isAuthenticated.value = false;
   AUTH_HEADER.value = {};
@@ -67,16 +134,6 @@ const handleLogout = () => {
   loginForm.password = "";
   subs.value = [];
 };
-
-// --- Verificar sessão ao montar ---
-onMounted(() => {
-  const savedAuth = sessionStorage.getItem("gea_auth");
-  if (savedAuth) {
-    // Verificar se ainda é válido
-    AUTH_HEADER.value = { "Authorization": `Basic ${savedAuth}` };
-    verifySession(savedAuth);
-  }
-});
 
 const verifySession = async (credentials) => {
   try {
@@ -94,17 +151,13 @@ const verifySession = async (credentials) => {
   }
 };
 
-const subs = ref([]);
-const loading = ref(false);
-const editingId = ref(null);
-
-// Estado do Formulário
-const form = reactive({
-  callback: "",
-  type: "",   // Ex: CAM, LPR_CAM
-  id: "",     // Ex: 1, 2
-  action: "",  // Ex: ALARM
-  priority: "" // Default priority
+onMounted(() => {
+  loadAudioSettings();
+  const savedAuth = sessionStorage.getItem("gea_auth");
+  if (savedAuth) {
+    AUTH_HEADER.value = { "Authorization": `Basic ${savedAuth}` };
+    verifySession(savedAuth);
+  }
 });
 
 // --- Carregar Assinaturas (GET) ---
@@ -358,6 +411,18 @@ const cancelEdit = () => {
       <main class="dp-main">
         <div style="display: flex; flex-direction: column; gap: 1rem; width: 100%; height: 100%;">
 
+          <!-- Abas internas -->
+          <div class="admin-tabs">
+            <button class="admin-tab-btn" :class="{ active: activeAdminTab === 'subscriptions' }" @click="activeAdminTab = 'subscriptions'">
+              ⚙️ Assinaturas
+            </button>
+            <button class="admin-tab-btn" :class="{ active: activeAdminTab === 'audio' }" @click="activeAdminTab = 'audio'">
+              🔊 Alertas Sonoros
+            </button>
+          </div>
+
+          <!-- Aba: Assinaturas -->
+          <template v-if="activeAdminTab === 'subscriptions'">
           <div class="dp-filters-card">
             <div class="dp-field dp-span-2" style="flex: 2">
               <label>Callback URL (Obrigatório)</label>
@@ -404,8 +469,58 @@ const cancelEdit = () => {
               </button>
             </div>
           </div>
+          </template>
 
-          <div class="dp-table-card">
+          <!-- Aba: Alertas Sonoros -->
+          <template v-else-if="activeAdminTab === 'audio'">
+          <div class="dp-filters-card">
+            <div style="grid-column: 1 / -1;">
+              <h3 style="margin: 0 0 0.25rem;">Configurações de Alerta Sonoro</h3>
+              <p style="margin: 0 0 1rem; color: var(--text-muted); font-size: 0.9rem;">Personalize o comportamento de alertas para novos eventos.</p>
+
+              <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">
+                  <label for="chk-audio" style="font-weight: 500;">Habilitar Alerta Sonoro</label>
+                  <input id="chk-audio" type="checkbox" v-model="audioEnabled" style="transform: scale(1.2);">
+                </div>
+
+                <div style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">
+                  <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem; color: var(--text-muted);">Arquivo de Áudio (.mp3, .wav)</label>
+
+                  <!-- Arquivo salvo no servidor -->
+                  <div v-if="selectedAudio && !selectedAudio.startsWith('data:')"
+                    style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.3); border-radius: 6px;">
+                    <span style="font-size: 1rem;">🔊</span>
+                    <div>
+                      <div style="font-size: 0.8rem; font-weight: 600; color: var(--primary);">Arquivo salvo: {{ selectedAudio.split('/').pop() }}</div>
+                      <div style="font-size: 0.7rem; color: var(--text-muted);">Clique em "Escolher arquivo" para substituir</div>
+                    </div>
+                  </div>
+
+                  <!-- Novo arquivo selecionado (ainda não salvo) -->
+                  <div v-else-if="selectedAudio && selectedAudio.startsWith('data:')"
+                    style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); border-radius: 6px;">
+                    <span style="font-size: 1rem;">⚠️</span>
+                    <div style="font-size: 0.8rem; color: #fbbf24;">Novo arquivo selecionado — clique em "Salvar" para confirmar</div>
+                  </div>
+
+                  <input type="file" accept="audio/*" @change="handleFileUpload" :disabled="!audioEnabled" style="margin-bottom: 0.5rem;" />
+                </div>
+
+                <div style="display: flex; gap: 1rem;">
+                  <button class="dp-btn dp-btn-ghost" @click="testAudio" :disabled="!audioEnabled || !selectedAudio" style="flex: 1;">
+                    🔊 Testar Som
+                  </button>
+                  <button class="dp-btn dp-btn-primary" @click="saveAudioSettings" style="flex: 1;">
+                    💾 Salvar Preferências
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          </template>
+
+          <div class="dp-table-card" v-if="activeAdminTab === 'subscriptions'">
             <div class="dp-table-wrapper">
               <table>
                 <thead>
@@ -446,6 +561,38 @@ const cancelEdit = () => {
 </template>
 
 <style scoped>
+/* Admin Tabs */
+.admin-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+
+.admin-tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.6rem 1.25rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  margin-bottom: -1px;
+}
+
+.admin-tab-btn:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.admin-tab-btn.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
 /* Login Overlay */
 .login-overlay {
   position: fixed;
