@@ -159,7 +159,7 @@ function buildTable(json, addToTable = false) {
             '<td id="resolution_time" class="to_hide">' +
             (json[i].resolution_time ? new Date(json[i].resolution_time).toLocaleTimeString("pt-br", options5) : "") +
             "</td>";
-        table += '<td hidden="true" id="comment" class="to_hide">' + (json[i].comment || "") + "</td>";
+        table += '<td hidden="true" id="comment" class="to_hide">' + (json[i].comments_history || json[i].comment || "") + "</td>";
         table += '<td hidden="true" id="action" class="to_hide">' + json[i].action + "</td>";
         table += '<td hidden="true" id="priority" class="to_hide">' + json[i].priority + "</td>";
         table += '<td hidden="true" id="procedure" class="to_hide">' + json[i].procedure + "</td>";
@@ -384,7 +384,7 @@ $("#pdf").on("click", () => {
             {
                 table: {
                     body: tableData,
-                    widths: ["auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto", 50, "auto"],
+                    widths: ["auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto", 180, "auto"],
                 },
             },
         ],
@@ -463,21 +463,21 @@ function state(value) {
 
     switch (value) {
         case "Em Tratamento":
-            if (["Em Tratamento", "Solucionado", "Falha de Sistema", "Novo", "Reconhecido", "Alarme"].includes(currentState)) {
+            if (["Em Tratamento", "Solucionado", "Falha de Sistema", "Novo", "Reconhecido", "Alarme Falso"].includes(currentState)) {
                 json.comment = "Evento em tratamento: " + json.comment;
                 json.response_time = localtimeString;
                 break;
             }
 
         case "Solucionado":
-            if (["Em Tratamento", "Falha de Sistema", "Novo", "Reconhecido", "Alarme"].includes(currentState)) {
+            if (["Em Tratamento", "Falha de Sistema", "Novo", "Reconhecido", "Alarme Falso"].includes(currentState)) {
                 json.comment = "Evento solucionado : " + json.comment;
                 json.resolution_time = localtimeString;
             }
             break;
         case "Falha de Sistema":
         case "Reconhecido":
-        case "Alarme":
+        case "Alarme Falso":
             json.resolution_time = localtimeString;
             json.comment = value + " : " + json.comment;
             break;
@@ -519,7 +519,7 @@ function masiveState(value, id, obj_id) {
         json.response_time = localtimeString;
         console.log("masiveState state", json, "currentState", currentState);
         socket.emit("state", json);
-    } else if (value == "Solucionado" && ["Em Tratamento", "Falha de Sistema", "Novo", "Reconhecido", "Alarme"].includes(currentState)) {
+    } else if (value == "Solucionado" && ["Em Tratamento", "Falha de Sistema", "Novo", "Reconhecido", "Alarme Falso"].includes(currentState)) {
         json.resolution_time = localtimeString;
         json.comment += "Evento solucionado em massa";
         console.log("masiveState state", json, "currentState", currentState);
@@ -589,6 +589,7 @@ function filterByState(obj) {
     var input;
     console.log(obj.value);
     filterstate = obj.value;
+    if (filterstate == "Alarme") filterstate = "Alarme Falso";
     if (filterstate == "All") filterstate = "";
     filter();
 }

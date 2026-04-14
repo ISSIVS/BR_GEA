@@ -88,8 +88,13 @@ h5 {
   transition: all .5s;
 }
 
-.table-selected {
-  background-color: #195F98;
+.table-selected,
+.table-selected td {
+  background-color: #195F98 !important;
+}
+
+.table-hover tbody tr.table-selected:hover td {
+  background-color: #195F98 !important;
 }
 
 .incident-head {

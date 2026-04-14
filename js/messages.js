@@ -11,7 +11,12 @@ function buildEventsSelectQuery(whereClause = "", orderClause = "", limitClause 
                 WHERE c.eventid = e.id
                 ORDER BY c.date DESC, c.id DESC
                 LIMIT 1
-            ) AS comment
+            ) AS comment,
+            (
+                SELECT STRING_AGG(c.comment, ' | ' ORDER BY c.date ASC, c.id ASC)
+                FROM comments c
+                WHERE c.eventid = e.id
+            ) AS comments_history
         FROM events e
         ${whereClause}
         ${orderClause}
