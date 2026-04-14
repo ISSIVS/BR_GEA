@@ -1,11 +1,11 @@
 const { Pool, Client } = require("pg");
 
 const pool = new Pool({
-    user: "postgres", //'dispatch_postgres',
-    host: "localhost",
-    database: "dispatch",
-    password: "postgres", //'dispatch_postgres',
-    port: 5432,
+    user: process.env.DB_USER,
+    host: process.env.DB_HOST,
+    database: process.env.DB_NAME,
+    password: process.env.DB_PASS,
+    port: parseInt(process.env.DB_PORT),
 });
 
 exports.query = function query(q, callback) {

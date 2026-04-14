@@ -10,36 +10,23 @@ CREATE DATABASE dispatch
 
 CREATE TABLE events
 (
-  incident text, -- Intrusion detector, Armed, Alarmed, etc
-  object_id text,
-  params text,
-  "time" timestamp without time zone,
-  type text, -- Usually CAM
-  operator text,
-  state text, -- New, In Progress, Resolved, Closed
-  comment text, -- Operator comment abour incident
-  response_time timestamp without time zone,
+  id              bigserial NOT NULL,
+  object_id       text,
+  name            text,
+  type            text,
+  action          text,
+  incident        text,
+  state           text,
+  priority        text,
+  operator        text,
+  params          text,
+  "time"          timestamp without time zone,
+  response_time   timestamp without time zone,
   resolution_time timestamp without time zone,
-  priority text, -- High, Medium, Low
-  procedure text, -- â€˜Started monitoring the incidentâ€™...
-  action text, -- Transfer,False Alarm,Export Incident
-  id bigserial NOT NULL,
-  name text,
-  cam_id text,
-  CONSTRAINT events_pkey PRIMARY KEY (id )
-)
-WITH (
-  OIDS=FALSE
+  procedure       text,
+  CONSTRAINT events_pkey PRIMARY KEY (id)
 );
-ALTER TABLE events
-  OWNER TO postgres;
-COMMENT ON COLUMN events.incident IS 'Intrusion detector, Armed, Alarmed, etc';
-COMMENT ON COLUMN events.type IS 'Usually CAM
-';
-COMMENT ON COLUMN events.state IS 'New, In Progress, Resolved, Closed';
-COMMENT ON COLUMN events.comment IS 'Operator comment abour incident';
-COMMENT ON COLUMN events.priority IS 'High, Medium, Low';
-COMMENT ON COLUMN events.action IS 'Transfer,False Alarm,Export Incident';
+ALTER TABLE events OWNER TO postgres;
 
 -- Table: logs
 
@@ -66,14 +53,38 @@ ALTER TABLE logs
 
 CREATE TABLE public.comments
 (
-    panel text COLLATE pg_catalog."default",
+    id      bigserial NOT NULL,
+    panel   text COLLATE pg_catalog."default",
     comment text COLLATE pg_catalog."default",
-    date timestamp without time zone,
-    "user" text COLLATE pg_catalog."default",
-    eventid text COLLATE pg_catalog."default"
+    date    timestamp without time zone,
+    "user"  text COLLATE pg_catalog."default",
+    eventid bigint,
+    CONSTRAINT comments_pkey PRIMARY KEY (id)
 )
 
 TABLESPACE pg_default;
 
 ALTER TABLE public.comments
     OWNER to postgres;
+
+-- Índices
+
+-- events: filtro por intervalo de tempo (select_filter) e ordenação (select)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_events_time
+    ON events (time DESC);
+
+-- events: busca por object_id
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_events_object_id
+    ON events (object_id);
+
+-- comments: busca por eventid (socket "abonado")
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_comments_eventid
+    ON comments (eventid);
+
+-- comments: ordenação por data
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_comments_date
+    ON comments (date ASC);
+
+-- logs: limpeza por tempo (limit_database)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_time
+    ON logs (time DESC);

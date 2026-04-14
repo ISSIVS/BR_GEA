@@ -10,9 +10,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@vercel/ncc": "^0.38.4",
     "cors": "^2.8.5",
     "dotenv": "^17.0.1",
     "express": "^4.19.2",
+    "ncc": "^0.3.6",
     "node-cron": "^3.0.3",
     "node-windows": "^1.0.0-beta.8",
     "npm": "^10.8.0",

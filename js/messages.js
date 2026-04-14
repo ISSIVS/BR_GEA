@@ -96,7 +96,7 @@ function update(id, table, json, callback) {
 }
 
 function select(table, limit, callback) {
-    var SelectQuery = `SELECT * FROM ${table} ORDER BY id DESC  LIMIT ${limit}`;
+    var SelectQuery = `SELECT * FROM ${table} ORDER BY time DESC, id DESC LIMIT ${limit}`;
 
     //console.log(SelectQuery);
     pg.query(SelectQuery, function (res) {
@@ -108,19 +108,29 @@ function select(table, limit, callback) {
 
 function select_filter(table, dates, callback) {
     try {
-        var startDate = new Date(dates.start);
-        var endDate = new Date(dates.end);
+        var startDate = dates.start ? new Date(dates.start) : new Date(new Date().setHours(0, 0, 0, 0));
+        var endDate = dates.end ? new Date(dates.end) : new Date(new Date().setHours(23, 59, 59, 999));
 
-        var formattedStartDate = startDate.toISOString();
-        var formattedEndDate = endDate.toISOString();
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+            startDate = new Date(new Date().setHours(0, 0, 0, 0));
+            endDate = new Date(new Date().setHours(23, 59, 59, 999));
+        }
 
-        var SelectQuery = `SELECT * FROM ${table} WHERE time BETWEEN '${formattedStartDate}' AND '${formattedEndDate}' ORDER BY id DESC`;
+        function toLocalISOString(d) {
+            const pad = (n) => String(n).padStart(2, "0");
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+        }
+
+        var formattedStartDate = toLocalISOString(startDate);
+        var formattedEndDate = toLocalISOString(endDate);
+
+        var SelectQuery = `SELECT * FROM ${table} WHERE time BETWEEN '${formattedStartDate}' AND '${formattedEndDate}' ORDER BY time DESC, id DESC`;
 
         pg.query(SelectQuery, function (res) {
             callback(res.rows);
         });
     } catch (e) {
-        console.log(e)
+        console.log(e);
     }
 }
 

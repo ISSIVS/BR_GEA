@@ -7,16 +7,25 @@ var bodyParser = require("body-parser");
 var path = require("path");
 var io = require("socket.io")(server);
 const message = require("./js/messages");
-const restapi = require("./js/restapi");
-const integrationServer = require("./js/integrationserver");
 const logs = require("./js/logs/logs");
 const classificationJSON = require("./translations.json");
 const cors = require('cors')
-const { subscribeToEvents } = require('./register.js');
-subscribeToEvents();
 
 const log_base_path = "GEA";
 var startDateTime, endDateTime;
+
+function getLocalISOString() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const ms = String(now.getMilliseconds()).padStart(3, '0');
+
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${ms}`;
+}
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -25,15 +34,8 @@ app.use(cors());
 
 const ip = process.env.SECUROS_SERVER_IP;
 const port = process.env.SERVER_PORT;
-const integrationPort = process.env.INTEGRATION_PORT;
-
-const restApiUser = process.env.SECUROS_SERVER_IP;
-const restApiPass = process.env.SECUROS_SERVER_IP;
-const restApiPort = process.env.SECUROS_SERVER_IP;
 
 // ---- START UP SERVER -----
-var intServer = new integrationServer.integrationServer(ip, integrationPort);
-
 server.listen(port || 3000, () => {
     console.log(`listening on *: ${port}`);
     logs.Write(`listening on *: ${port}`, "INFO", log_base_path);
@@ -51,52 +53,40 @@ app.post("/securos", function (req, res) {
 //Register Events
 app.post("/events", function (req, res) {
     try {
-        if (req.body[0]) {
-            logs.Write(`Event Received : ${JSON.stringify(req.body[0])}`, "DEBUG", log_base_path);
-
-            const incident = req.body[0].params.action || classifyEvent(req.body[0]);
-
-            req.body[0].object_id = req.body[0].id;
-            req.body[0].state = "Novo";
-            req.body[0].params = JSON.stringify(req.body[0].params);
-            req.body[0].incident = incident;
-            logs.Write(`Event Received : ${JSON.stringify(req.body[0].params.comment)}`, "INFO", log_base_path);
-            delete req.body[0].id;
-
-            getObject(req.body[0], function (res) {
-                if (res) {
-                    logs.Write("Object found in SecurOS DB ", "DEBUG", log_base_path);
-                    logs.Write("GetObject Result: " + JSON.stringify(res), "DEBUG", log_base_path);
-                    logs.Write("NAME: " + JSON.stringify(res.name), "DEBUG", log_base_path);
-                    req.body[0].name = res.name;
-                    req.body[0].priority = res.params != undefined ? res.params.tp_name : "Baixa";
-
-                    logs.Write("body: " + JSON.stringify(req.body[0]), "DEBUG", log_base_path);
-
-                    // Insert event into the database
-                    message.insert("events", req.body[0], function () {
-                        // Fetch latest events
-                        message.select("events", 10, function (res) {
-                            // Emit new event to HTML
-                            io.emit("newEvent", res);
-                        });
-                    });
-                } else {
-                    console.log("Object not found");
-                    logs.Write("Object not found", "ERROR", log_base_path + "_Events_not_found");
-                    logs.Write(
-                        "object_id:" + req.body[0].object_id + ", type:" + req.body[0].type + ", incident:" + req.body[0].incident,
-                        "ERROR",
-                        log_base_path + "_Events_not_found"
-                    );
-                }
-            });
+        const events = Array.isArray(req.body) ? req.body : [req.body];
+        console.log(events)
+        if (!events.length || !events[0]) {
+            return res.status(400).json({ error: "Empty or invalid body" });
         }
+
+        events.forEach(function (event) {
+            if (!event || typeof event !== "object") return;
+            logs.Write(`Event Received : ${JSON.stringify(event)}`, "DEBUG", log_base_path);
+
+            const incident = event.action || classifyEvent(event);
+
+            event.object_id = event.id;
+            event.state = "Novo";
+            event.priority = event.priority || "Baixa";
+            event.incident = incident;
+            event.time = event.time || getLocalISOString();
+            event.params = JSON.stringify(event.params || {});
+            delete event.id;
+
+            logs.Write(`Event body: ${JSON.stringify(event)}`, "INFO", log_base_path);
+
+            message.insert("events", event, function () {
+                message.select("events", 10, function (result) {
+                    io.emit("newEvent", result);
+                });
+            });
+        });
+
+        res.json({ received: events.length });
     } catch (e) {
         console.log(e);
         logs.Write("ERROR: " + e, "ERROR", log_base_path);
-    } finally {
-        res.send("ok");
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -143,6 +133,7 @@ io.on("connection", function (socket) {
         logs.Write(`On state: ${json}`, "DEBUG", log_base_path);
         var json_update = Object.assign({}, json);
         delete json_update.obj_id;
+        delete json_update.comment;
         var log = {
             incident_id: parseInt(json.id),
             time: json.resolution_time,
@@ -176,31 +167,6 @@ io.on("connection", function (socket) {
         });
     });
 });
-
-// Limit tables (events and comments) data
-/* cron.schedule("* * * * *", () => {
-    message.limit_database("", (res) => {
-        logs.Write( 
-            res[0].rowCount + " linhas deletadas da tabela eventos; "+ res[1].rowCount + " linhas deletadas da tabela comments"
-        ,"DEBUG", log_base_path);
-        if (res[0].rowCount == 0) return;
-        message.select_filter("events", { start: moment().startOf("days"), end: moment().endOf("days") }, (res) => io.emit("Events", res), "INFO", log_base_path);
-    });
-}); */
-
-function getObject(body, callback) {
-    intServer.getObject(body, function (res) {
-        logs.Write(`intServer.getObject : ${res}`, "DEBUG", log_base_path);
-        callback(res);
-    });
-}
-
-function getCameras(callback) {
-    var rest = new restapi.restapi(ip, restApiPort, restApiUser, restApiPass);
-    rest.getRequest("api/v1/cameras", function (res) {
-        callback(res);
-    });
-}
 
 function classifyEvent(e) {
     const type = e.type || "default";
