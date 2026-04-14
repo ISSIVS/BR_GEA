@@ -1,6 +1,24 @@
 const pg = require("./pg");
 var nextId;
 
+function buildEventsSelectQuery(whereClause = "", orderClause = "", limitClause = "") {
+    return `
+        SELECT
+            e.*,
+            (
+                SELECT c.comment
+                FROM comments c
+                WHERE c.eventid = e.id
+                ORDER BY c.date DESC, c.id DESC
+                LIMIT 1
+            ) AS comment
+        FROM events e
+        ${whereClause}
+        ${orderClause}
+        ${limitClause}
+    `;
+}
+
 function message(script, id, table, json, callback) {
     //Event id in table events
     pg.query(`SELECT * FROM ${table} ORDER BY id ASC`, function (res) {
@@ -96,7 +114,10 @@ function update(id, table, json, callback) {
 }
 
 function select(table, limit, callback) {
-    var SelectQuery = `SELECT * FROM ${table} ORDER BY time DESC, id DESC LIMIT ${limit}`;
+    var SelectQuery =
+        table === "events"
+            ? buildEventsSelectQuery("", "ORDER BY e.time DESC, e.id DESC", `LIMIT ${limit}`)
+            : `SELECT * FROM ${table} ORDER BY time DESC, id DESC LIMIT ${limit}`;
 
     //console.log(SelectQuery);
     pg.query(SelectQuery, function (res) {
@@ -124,7 +145,13 @@ function select_filter(table, dates, callback) {
         var formattedStartDate = toLocalISOString(startDate);
         var formattedEndDate = toLocalISOString(endDate);
 
-        var SelectQuery = `SELECT * FROM ${table} WHERE time BETWEEN '${formattedStartDate}' AND '${formattedEndDate}' ORDER BY time DESC, id DESC`;
+        var SelectQuery =
+            table === "events"
+                ? buildEventsSelectQuery(
+                      `WHERE e.time BETWEEN '${formattedStartDate}' AND '${formattedEndDate}'`,
+                      "ORDER BY e.time DESC, e.id DESC"
+                  )
+                : `SELECT * FROM ${table} WHERE time BETWEEN '${formattedStartDate}' AND '${formattedEndDate}' ORDER BY time DESC, id DESC`;
 
         pg.query(SelectQuery, function (res) {
             callback(res.rows);
@@ -135,7 +162,7 @@ function select_filter(table, dates, callback) {
 }
 
 function search(table, id, callback) {
-    var SelectQuery = `SELECT * FROM ${table} WHERE id = ${id}`;
+    var SelectQuery = table === "events" ? buildEventsSelectQuery(`WHERE e.id = ${id}`) : `SELECT * FROM ${table} WHERE id = ${id}`;
 
     //console.log(SelectQuery);
     pg.query(SelectQuery, function (res) {

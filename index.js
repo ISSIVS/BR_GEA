@@ -12,7 +12,8 @@ const classificationJSON = require("./translations.json");
 const cors = require('cors')
 
 const log_base_path = "GEA";
-var startDateTime, endDateTime;
+// Map para armazenar filtro por socket: socketId → {start, end}
+const socketFilters = new Map();
 
 function getLocalISOString() {
     const now = new Date();
@@ -97,8 +98,8 @@ io.on("connection", function (socket) {
     socket.on("filter", (json) => {
         try {
             console.log(json);
-            startDateTime = json.start;
-            endDateTime = json.end;
+            // Armazenar filtro para este socket
+            socketFilters.set(socket.id, { start: json.start, end: json.end });
             message.select_filter("events", json, (res) => socket.emit("Events", res));
         } catch (e) {
             console.log(e);
@@ -125,6 +126,8 @@ io.on("connection", function (socket) {
 
     socket.on("disconnect", () => {
         logs.Write(`user disconnected`, "DEBUG", log_base_path);
+        // Remover filtro quando socket desconectar
+        socketFilters.delete(socket.id);
     });
 
     //Change State
@@ -152,14 +155,34 @@ io.on("connection", function (socket) {
             message.insert("comments", comment_json, function (e) {
                 message.searchlike_order("comments", "eventid", json.id, "date", function (response) {
                     message.update(json.id, "events", json_update, function () {
-                        message.select_filter("events", { start: startDateTime, end: endDateTime }, (res) => io.emit("Events", res));
+                        // Emitir para o socket que fez a mudança
+                        const filter = socketFilters.get(socket.id);
+                        if (filter) {
+                            message.select_filter("events", filter, (res) => socket.emit("Events", res));
+                        }
+                        // Emitir para todos os outros sockets com filtros ativos
+                        socketFilters.forEach((filter, socketId) => {
+                            if (socketId !== socket.id) {
+                                message.select_filter("events", filter, (res) => io.to(socketId).emit("Events", res));
+                            }
+                        });
                     });
                     io.emit("comments", response);
                 });
             });
         } else {
             message.update(json.id, "events", json_update, function () {
-                message.select_filter("events", { start: startDateTime, end: endDateTime }, (res) => io.emit("Events", res));
+                // Emitir para o socket que fez a mudança
+                const filter = socketFilters.get(socket.id);
+                if (filter) {
+                    message.select_filter("events", filter, (res) => socket.emit("Events", res));
+                }
+                // Emitir para todos os outros sockets com filtros ativos
+                socketFilters.forEach((filter, socketId) => {
+                    if (socketId !== socket.id) {
+                        message.select_filter("events", filter, (res) => io.to(socketId).emit("Events", res));
+                    }
+                });
             });
         }
         message.insert("logs", log, function (e) {

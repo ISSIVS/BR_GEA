@@ -159,7 +159,7 @@ function buildTable(json, addToTable = false) {
             '<td id="resolution_time" class="to_hide">' +
             (json[i].resolution_time ? new Date(json[i].resolution_time).toLocaleTimeString("pt-br", options5) : "") +
             "</td>";
-        table += '<td hidden="true" id="comment" class="to_hide">' + json[i].comment + "</td>";
+        table += '<td hidden="true" id="comment" class="to_hide">' + (json[i].comment || "") + "</td>";
         table += '<td hidden="true" id="action" class="to_hide">' + json[i].action + "</td>";
         table += '<td hidden="true" id="priority" class="to_hide">' + json[i].priority + "</td>";
         table += '<td hidden="true" id="procedure" class="to_hide">' + json[i].procedure + "</td>";
