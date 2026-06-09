@@ -14,6 +14,34 @@ var coordinates = [];
 let alertMessage = new AlertMessage();
 var startDateFilter, endDateFilter;
 var watchlistLPR = {};
+var fleuryLogoBase64 = null;
+var activeAlarmClass = "";
+var operator = "Usuário Externo";
+
+fetch("/me")
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data && data.user) {
+            operator = data.user;
+            var el = document.getElementById("test");
+            if (el) el.textContent = operator;
+            // Ambiente interno SecurOS: sem opção de sair
+            if (data.securos) {
+                var logoutBtn = document.getElementById("logoutBtn");
+                if (logoutBtn) logoutBtn.style.display = "none";
+            }
+        }
+    })
+    .catch(function() {});
+
+fetch("images/fleury_logo.png")
+    .then(function(res) { return res.blob(); })
+    .then(function(blob) {
+        var reader = new FileReader();
+        reader.onloadend = function() { fleuryLogoBase64 = reader.result; };
+        reader.readAsDataURL(blob);
+    })
+    .catch(function() { fleuryLogoBase64 = null; });
 
 var socket = io();
 
@@ -27,6 +55,7 @@ socket.on("newEvent", function (msg) {
 socket.on("Events", function (msg) {
     console.log("receiving event :", msg);
     buildTable(msg);
+    refreshOpenCard();
     hideLoadingIndicator();
 });
 
@@ -56,6 +85,185 @@ var tabindex = undefined;
 /////////////////////////////////////TABLA INCIDENTES/////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////
 
+function getAlarmClass(action) {
+    if (!action) return "";
+    if (action === "INTRUSAO DETECTADA") return "alarm-intrusao";
+    if (action === "PERDEU SINAL") return "alarm-perda-sinal";
+    if (action.includes("SEKRON")) return "alarm-sekron";
+    return "";
+}
+
+var CHECKLISTS = {
+    "alarm-perda-sinal": {
+        titulo: "🔔 Perda de Sinal",
+        perguntas: [
+            "Gravador (DVR/NVR) foi verificado?",
+            "Indisponibilidade de câmera foi confirmada?",
+            "Evento exige acionamento técnico?"
+        ]
+    },
+    "alarm-intrusao": {
+        titulo: "🚨 Intrusão Detectada",
+        perguntas: [
+            "Imagens foram avaliadas?",
+            "Evento confirmado ou tratado?",
+            "Ação necessária foi tomada?"
+        ]
+    },
+    "alarm-sekron": {
+        titulo: "🔵 Evento Sekron",
+        perguntas: [
+            "Evento foi avaliado?",
+            "Imagens foram verificadas ou houve contato com o local?",
+            "Evento demandou ação operacional?"
+        ]
+    }
+};
+
+function renderChecklist(alarmClass, savedProcedure, readonly) {
+    var area = document.getElementById("checklistArea");
+    var content = document.getElementById("checklistContent");
+    var checklist = CHECKLISTS[alarmClass];
+
+    if (!checklist) {
+        area.style.display = "none";
+        content.innerHTML = "";
+        return;
+    }
+
+    var disabled = readonly ? ' disabled' : '';
+    var html = '<div class="checklist-title">' + checklist.titulo + (readonly ? ' <small style="opacity:.6;font-weight:400">(concluído)</small>' : '') + '</div>';
+    checklist.perguntas.forEach(function(pergunta, idx) {
+        html +=
+            '<div class="checklist-item">' +
+                '<span>' + pergunta + '</span>' +
+                '<div class="checklist-options">' +
+                    '<label><input type="radio" name="cl_' + idx + '" value="Sim"' + disabled + '> Sim</label>' +
+                    '<label><input type="radio" name="cl_' + idx + '" value="Não"' + disabled + '> Não</label>' +
+                '</div>' +
+            '</div>';
+    });
+
+    content.innerHTML = html;
+    area.style.display = "block";
+    var actions = document.getElementById("checklistActions");
+    if (actions) actions.style.display = readonly ? "none" : "flex";
+
+    // Restore saved answers
+    if (savedProcedure) {
+        try {
+            var saved = JSON.parse(savedProcedure);
+            Object.keys(saved).forEach(function(name) {
+                var radio = content.querySelector('input[name="' + name + '"][value="' + saved[name] + '"]');
+                if (radio) radio.checked = true;
+            });
+        } catch(e) {}
+    }
+
+    if (!readonly) {
+        updateConcluirBtn();
+        content.addEventListener("change", updateConcluirBtn);
+    }
+}
+
+function updateConcluirBtn() {
+    var btn = document.getElementById("btnConcluir");
+    if (btn) btn.disabled = !allChecklistAnswered();
+}
+
+function allChecklistAnswered() {
+    var content = document.getElementById("checklistContent");
+    if (!content) return true;
+    var allRadios = content.querySelectorAll("input[type=radio]");
+    if (allRadios.length === 0) return false;
+    var names = new Set(Array.from(allRadios).map(function(r) { return r.name; }));
+    var checkedNames = new Set(Array.from(content.querySelectorAll("input[type=radio]:checked")).map(function(r) { return r.name; }));
+    return checkedNames.size === names.size;
+}
+
+function getChecklistData() {
+    var area = document.getElementById("checklistArea");
+    if (!area || area.style.display === "none") return null;
+    var radios = area.querySelectorAll("input[type=radio]:checked");
+    if (radios.length === 0) return null;
+    var result = {};
+    radios.forEach(function(r) { result[r.name] = r.value; });
+    return JSON.stringify(result);
+}
+
+function saveChecklist() {
+    var checklistData = getChecklistData();
+    if (!checklistData) {
+        alertMessage.alertMessage("Preencha ao menos uma resposta antes de salvar.", "danger");
+        return;
+    }
+    var id = document.getElementById("card_title").innerHTML;
+    if (!id) return;
+    socket.emit("procedure", { id: id, procedure: checklistData });
+
+    // Update DOM so reopening the event reflects the new answers immediately
+    var row = document.querySelector('tr[tabindex="' + id + '"]');
+    if (row) {
+        var procedureTd = row.querySelector("td#procedure");
+        if (procedureTd) procedureTd.innerHTML = checklistData;
+    }
+
+    showToast("Checklist salvo.");
+}
+
+// Re-renderiza o card atualmente aberto quando chega atualização do servidor
+// (ex.: outro operador salvou o checklist ou mudou o status). Preserva edição em andamento.
+function refreshOpenCard() {
+    var card = document.getElementById("incidentCard");
+    if (!card || card.classList.contains("hidden")) return;
+
+    var id = (document.getElementById("card_title").innerHTML || "").trim();
+    if (!id) return;
+    var row = document.querySelector('tr[tabindex="' + id + '"]');
+    if (!row) return;
+
+    var state = ((row.querySelector("td#state") || {}).textContent || "").trim();
+    var savedProcedure = (row.querySelector("td#procedure") || {}).innerHTML || "";
+
+    var cardState = document.getElementById("card_state");
+    if (cardState) cardState.innerHTML = state;
+
+    var rowClasses = row.getAttribute("class") || "";
+    activeAlarmClass = ["alarm-intrusao", "alarm-perda-sinal", "alarm-sekron"].find(function (c) {
+        return rowClasses.includes(c);
+    }) || "";
+
+    var concluded = state === "Concluído" || state === "Alarme Falso";
+    if (concluded) {
+        // Readonly: seguro re-renderizar sempre
+        renderChecklist(activeAlarmClass, savedProcedure, true);
+    } else if (state === "Em Atendimento Técnico") {
+        // Editável: só re-renderiza se não houver respostas em andamento (evita apagar a edição do operador)
+        var hasLocalEdits = document.querySelectorAll("#checklistContent input[type=radio]:checked").length > 0;
+        if (!hasLocalEdits) renderChecklist(activeAlarmClass, savedProcedure, false);
+    }
+}
+
+function showToast(msg, type) {
+    var bg = type === "danger" ? "#e53935" : "#2eb052";
+    var toast = document.getElementById("checklistToast");
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "checklistToast";
+        toast.style.cssText = "position:fixed;bottom:1.5em;right:1.5em;color:#fff;padding:0.4em 1em;border-radius:4px;font-size:0.8em;z-index:99999;opacity:1;transition:opacity 0.4s";
+        document.body.appendChild(toast);
+    }
+    toast.style.background = bg;
+    toast.textContent = msg;
+    toast.style.opacity = "1";
+    toast.style.display = "block";
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(function() {
+        toast.style.opacity = "0";
+        setTimeout(function() { toast.style.display = "none"; }, 400);
+    }, 2000);
+}
+
 function buildTable(json, addToTable = false) {
     var table = "";
     var ids = $("tr")
@@ -69,16 +277,17 @@ function buildTable(json, addToTable = false) {
         const elementoEncontrado = ids.indexOf(id);
         if (addToTable && elementoEncontrado != -1) continue;
 
-        table += '<tr class="table-row clickable-row" tabindex="' + json[i].id + '" onkeydown="keydown()">';
+        var alarmClass = getAlarmClass(json[i].action);
+        table += '<tr class="table-row clickable-row ' + alarmClass + '" tabindex="' + json[i].id + '" onkeydown="keydown()">';
 
         // Setting ID
         table += '<td scope="row" id="id" hidden="true">' + json[i].id + "</td>";
 
-        // Setting checkbox
+        // Setting checkbox (hidden)
         table +=
             '<td id="tdcheck_' +
             json[i].id +
-            '"><input type="checkbox" id="check_' +
+            '" style="display:none"><input type="checkbox" id="check_' +
             json[i].id +
             '" name="' +
             json[i].object_id +
@@ -152,11 +361,11 @@ function buildTable(json, addToTable = false) {
         table += '<td id="state" class="to_hide">' + (json[i].state || "") + "</td>";
         table += '<td id="operator" class="to_hide">' + json[i].operator + "</td>";
         table +=
-            '<td id="responsetime" class="to_hide">' +
+            '<td id="responsetime" class="to_hide" style="display:none">' +
             (json[i].response_time ? new Date(json[i].response_time).toLocaleTimeString("pt-br", options5) : "") +
             "</td>";
         table +=
-            '<td id="resolution_time" class="to_hide">' +
+            '<td id="resolution_time" class="to_hide" style="display:none">' +
             (json[i].resolution_time ? new Date(json[i].resolution_time).toLocaleTimeString("pt-br", options5) : "") +
             "</td>";
         table += '<td hidden="true" id="comment" class="to_hide">' + (json[i].comments_history || json[i].comment || "") + "</td>";
@@ -213,20 +422,19 @@ function ready($) {
     //Click Incidents Rows
     ////////////////////////////////
 
-    $(document).ready(function ($) {
-        $(document).on("dblclick", ".table-row", function () {
-            try {
-                var cam_id = document.getElementById("card_id").innerHTML;
-                var params = document.getElementById("params").innerHTML;
-                console.log("On Click Incidents Rows to show cam_id", cam_id, params);
-                var date = document.getElementById("card_incidentDate").innerHTML;
-                ISScustomAPI.sendReact("MEDIA_CLIENT", Média_client, "ADD_SEQUENCE", '{"mode":"1x1","seq":"' + cam_id + '"}');
-            } catch (e) {
-                document.getElementById("test").innerHTML = e;
-            }
-        });
+    $(document).off("dblclick.tablerow").on("dblclick.tablerow", ".table-row", function () {
+        try {
+            var cam_id = document.getElementById("card_id").innerHTML;
+            var params = document.getElementById("params").innerHTML;
+            console.log("On Click Incidents Rows to show cam_id", cam_id, params);
+            var date = document.getElementById("card_incidentDate").innerHTML;
+            ISScustomAPI.sendReact("MEDIA_CLIENT", Média_client, "ADD_SEQUENCE", '{"mode":"1x1","seq":"' + cam_id + '"}');
+        } catch (e) {
+            document.getElementById("test").innerHTML = e;
+        }
+    });
 
-        $(".table-row").click(function (e) {
+    $(document).off("click.tablerow").on("click.tablerow", ".table-row", function (e) {
             //console.log('clic:', e);
             if (e.target.getAttribute("type") != "checkbox") {
                 var item = document.getElementById("contactCard");
@@ -286,11 +494,25 @@ function ready($) {
                     table.classList.replace("col-md-12", "col-md-8");
                     table.classList.add("tablediv");
                 }
+                var rowClasses = $(this).attr("class") || "";
+                activeAlarmClass = ["alarm-intrusao", "alarm-perda-sinal", "alarm-sekron"].find(function(c) {
+                    return rowClasses.includes(c);
+                }) || "";
+                var savedProcedure = $(this).find("td#procedure").html() || "";
+                var hasComment = comment && comment.trim() !== "" && comment !== "null";
+
+                var concluded = state === "Concluído" || state === "Alarme Falso";
+                if (state === "Em Atendimento Técnico" || hasComment || concluded) {
+                    renderChecklist(activeAlarmClass, savedProcedure, concluded);
+                } else {
+                    document.getElementById("checklistArea").style.display = "none";
+                    document.getElementById("checklistContent").innerHTML = "";
+                }
+
                 console.log("Clic Abonbado", $(this).find("td").html(), camera);
                 socket.emit("abonado", $(this).find("td").html(), camera);
             }
         });
-    });
 }
 
 //-------------------------- JQUERYS Section -----------------
@@ -358,50 +580,142 @@ $(document).ready(function () {
 
 //-------------------- USER FUNCTIONS -------------------
 
+function formatProcedureForPDF(procedureText, actionText) {
+    if (!procedureText || procedureText === "null" || procedureText === "undefined") return "";
+    var alarmClass = getAlarmClass(actionText);
+    var checklist = CHECKLISTS[alarmClass];
+    if (!checklist) return "";
+    try {
+        var saved = JSON.parse(procedureText);
+        return checklist.perguntas.map(function(q, idx) {
+            var ans = saved["cl_" + idx] || "-";
+            var short = q.length > 40 ? q.substring(0, 38) + "…" : q;
+            return short + ": " + ans;
+        }).join("\n");
+    } catch(e) { return ""; }
+}
+
 //Export to PDF
 $("#pdf").on("click", () => {
     var table = document.getElementById("table");
-    var tableData = [];
 
-    for (var i = 0; i < table.rows.length; i++) {
-        if (table.rows[i].style.display !== "none") {
-            var rowData = [];
-            var cells = table.rows[i].cells;
-            for (var j = 3; j <= 13; j++) {
-                rowData.push(cells[j].innerText);
-            }
-            tableData.push(rowData);
-        }
+    // Columns to export: index → label  (comentário/checklist handled separately)
+    var cols = [
+        { idx: 3,  label: "Objeto" },
+        { idx: 4,  label: "ID" },
+        { idx: 5,  label: "Nome" },
+        { idx: 6,  label: "Evento" },
+        { idx: 7,  label: "Data / Hora" },
+        { idx: 8,  label: "Estado" },
+        { idx: 9,  label: "Operador" },
+    ];
+
+    // Fixed cols sum to ~513pt; last col ('*') fills the rest of the 793pt usable width
+    var colWidths = [40, 44, 98, 108, 88, 75, 60, '*'];
+
+    // Header row
+    var tableBody = [
+        cols.map(function(c) {
+            return { text: c.label, style: "tableHeader" };
+        }).concat([{ text: "Checklist", style: "tableHeader" }])
+    ];
+
+    // Data rows
+    var rowCount = 0;
+    for (var i = 1; i < table.rows.length; i++) {
+        if (table.rows[i].style.display === "none") continue;
+        var cells = table.rows[i].cells;
+        var isEven = rowCount % 2 === 0;
+        var fill = isEven ? "#ffffff" : "#f4f6f9";
+        var row = cols.map(function(c) {
+            var text = cells[c.idx] ? (cells[c.idx].innerText || "") : "";
+            return { text: text, fillColor: fill, color: "#222222" };
+        });
+
+        // Checklist
+        var procedureText = cells[15] ? (cells[15].textContent || "").trim() : "";
+        var actionText    = cells[13] ? (cells[13].textContent || "").trim() : "";
+        var checklistText = formatProcedureForPDF(procedureText, actionText);
+
+        row.push({ text: checklistText, fillColor: fill, color: "#222222", fontSize: 6.5 });
+
+        tableBody.push(row);
+        rowCount++;
     }
+
+    var now = new Date();
+    var dataHora = now.toLocaleDateString("pt-br") + "  " + now.toLocaleTimeString("pt-br");
+
+    // Page header: logo + title + date
+    var pageHeader = {
+        columns: [
+            fleuryLogoBase64
+                ? { image: fleuryLogoBase64, width: 55, margin: [0, 0, 0, 0] }
+                : { text: "", width: 55 },
+            {
+                stack: [
+                    { text: "Relatório de Alarmes", style: "titulo" },
+                    { text: "Fleury Medicina e Saúde", style: "subtitulo" },
+                ],
+                alignment: "center",
+            },
+            {
+                stack: [
+                    { text: "Emitido em:", style: "labelData" },
+                    { text: dataHora, style: "valorData" },
+                    { text: rowCount + " registro(s)", style: "valorData" },
+                ],
+                alignment: "right",
+                width: 130,
+            },
+        ],
+        margin: [0, 0, 0, 10],
+    };
 
     var docDefinition = {
         pageOrientation: "landscape",
+        pageMargins: [24, 24, 24, 36],
         content: [
-            { text: "Relatório - GEA", style: "header", alignment: "center" },
-            { text: "\n" },
-            { text: new Date().toLocaleString(), style: "subheader", alignment: "center" },
-            { text: "\n\n" },
+            pageHeader,
+            { canvas: [{ type: "line", x1: 0, y1: 0, x2: 793, y2: 0, lineWidth: 1.5, lineColor: "#2C6FAC" }], margin: [0, 0, 0, 8] },
             {
                 table: {
-                    body: tableData,
-                    widths: ["auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto", "auto", 180, "auto"],
+                    headerRows: 1,
+                    widths: colWidths,
+                    body: tableBody,
+                },
+                layout: {
+                    hLineWidth: function(i) { return i === 0 || i === 1 ? 0 : 0.5; },
+                    vLineWidth: function() { return 0; },
+                    hLineColor: function() { return "#d0d7e3"; },
+                    paddingLeft:   function() { return 4; },
+                    paddingRight:  function() { return 4; },
+                    paddingTop:    function() { return 3; },
+                    paddingBottom: function() { return 3; },
                 },
             },
         ],
-        defaultStyle: {
-            fontSize: 8,
-            alignment: "center",
+        footer: function(page, pages) {
+            return {
+                columns: [
+                    { text: "Fleury Medicina e Saúde — Relatório de Alarmes", style: "rodape", alignment: "left" },
+                    { text: "Página " + page + " de " + pages, style: "rodape", alignment: "right" },
+                ],
+                margin: [24, 10],
+            };
         },
+        defaultStyle: { fontSize: 7.5, color: "#222222" },
         styles: {
-            header: {
-                fontSize: 18,
-                bold: true,
-            },
+            titulo:     { fontSize: 15, bold: true, color: "#1a3a5c" },
+            subtitulo:  { fontSize: 9,  color: "#5a7a9a" },
+            labelData:  { fontSize: 7,  color: "#888888" },
+            valorData:  { fontSize: 8,  bold: true, color: "#1a3a5c" },
+            tableHeader:{ fontSize: 8,  bold: true, color: "#ffffff", fillColor: "#2C6FAC", alignment: "center" },
+            rodape:     { fontSize: 7,  color: "#999999" },
         },
     };
 
-    var pdfDoc = pdfMake.createPdf(docDefinition);
-    pdfDoc.download("RelatórioPDF_" + formattedDateTime(new Date()) + ".pdf");
+    pdfMake.createPdf(docDefinition).download("Fleury_Alarmes_" + formattedDateTime(new Date()) + ".pdf");
 });
 
 //Export to CSV
@@ -445,48 +759,105 @@ function state(value) {
     localTime += "." + isoDateTime.getMilliseconds();
     var localtimeString = localDate + " " + localTime;
     var id = document.getElementById("card_title").innerHTML;
-    var co = document.getElementById("card_comment").value;
     var obj_id = document.getElementById("card_camera").innerHTML;
     var auxid = document.querySelector('tr[tabindex="' + id + '"]');
     var currentState = auxid.querySelector("tr td#state").textContent;
     console.log("state ", id, currentState);
 
+    if (value === currentState) return;
+
+    // Validate checklist before concluding
+    if (value === "Concluído" && CHECKLISTS[activeAlarmClass]) {
+        var area = document.getElementById("checklistArea");
+        if (area && area.style.display === "none") {
+            var rowEl = document.querySelector('tr[tabindex="' + id + '"]');
+            var savedProc = rowEl ? (rowEl.querySelector("td#procedure") || {}).innerHTML || "" : "";
+            renderChecklist(activeAlarmClass, savedProc);
+        }
+        if (!allChecklistAnswered()) {
+            showToast("Preencha todos os itens do checklist antes de concluir.", "danger");
+            return;
+        }
+    }
+
+    var checklistData = getChecklistData();
     var json = {
         id: id,
         obj_id: obj_id,
         state: value,
         operator: operator || "Usuário Externo",
-        comment: co,
+        // A mudança de status registra apenas o rótulo do status (linha de evento).
+        // Comentários do operador são independentes, via addComment().
+        comment: value,
     };
-    //console.log('json',json)
-    document.getElementById("card_comment").value = "";
+    if (checklistData) json.procedure = checklistData;
 
     switch (value) {
-        case "Em Tratamento":
-            if (["Em Tratamento", "Solucionado", "Falha de Sistema", "Novo", "Reconhecido", "Alarme Falso"].includes(currentState)) {
-                json.comment = "Evento em tratamento: " + json.comment;
+        case "Em Atendimento Técnico":
+            if (["Em Atendimento Técnico", "Concluído", "Falha de Sistema", "Não tratado", "Alarme Falso"].includes(currentState)) {
                 json.response_time = localtimeString;
                 break;
             }
 
-        case "Solucionado":
-            if (["Em Tratamento", "Falha de Sistema", "Novo", "Reconhecido", "Alarme Falso"].includes(currentState)) {
-                json.comment = "Evento solucionado : " + json.comment;
+        case "Concluído":
+            if (["Em Atendimento Técnico", "Falha de Sistema", "Não tratado", "Alarme Falso"].includes(currentState)) {
                 json.resolution_time = localtimeString;
             }
             break;
-        case "Falha de Sistema":
-        case "Reconhecido":
         case "Alarme Falso":
             json.resolution_time = localtimeString;
-            json.comment = value + " : " + json.comment;
             break;
         default:
     }
 
     document.getElementById("card_state").innerHTML = value;
-    console.log("function state state", json, "currentState", currentState);
+    // Atualiza o estado na linha da tabela imediatamente, sem esperar o re-emit do servidor
+    if (auxid) {
+        var stateTd = auxid.querySelector("td#state");
+        if (stateTd) stateTd.textContent = value;
+    }
     socket.emit("state", json);
+
+    // Update checklist visibility/state after action.
+    // Usa o checklist recém-enviado (checklistData) para refletir na hora, sem esperar
+    // o retorno do servidor / reabrir o evento. Fallback para o que já está salvo na linha.
+    var row = document.querySelector('tr[tabindex="' + id + '"]');
+    var savedProc = checklistData || (row ? (row.querySelector("td#procedure") || {}).innerHTML || "" : "");
+    if (value === "Em Atendimento Técnico") {
+        renderChecklist(activeAlarmClass, savedProc, false);
+    } else if (value === "Concluído" || value === "Alarme Falso") {
+        renderChecklist(activeAlarmClass, savedProc, true);
+    }
+}
+
+// Comentário do operador — independente da mudança de status (pode adicionar quantos quiser)
+function addComment() {
+    var co = document.getElementById("card_comment").value.trim();
+    if (!co) return;
+
+    var isoDateTime = new Date();
+    var localDate = dateYYYYMMDD(isoDateTime);
+    var localTime = isoDateTime.toLocaleTimeString("us", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        mili: "2-digit",
+        hour12: false,
+    });
+    localTime += "." + isoDateTime.getMilliseconds();
+    var localtimeString = localDate + " " + localTime;
+
+    var id = document.getElementById("card_title").innerHTML;
+    var obj_id = document.getElementById("card_camera").innerHTML;
+
+    document.getElementById("card_comment").value = "";
+    socket.emit("comment", {
+        id: id,
+        obj_id: obj_id,
+        operator: operator || "Usuário Externo",
+        comment: co,
+        date: localtimeString,
+    });
 }
 
 function masiveState(value, id, obj_id) {
@@ -514,14 +885,14 @@ function masiveState(value, id, obj_id) {
         comment: co,
     };
 
-    if (value == "Em Tratamento" && currentState == "Novo") {
+    if (value == "Em Atendimento Técnico" && currentState == "Não tratado") {
         json.comment += "Evento registrado em massa";
         json.response_time = localtimeString;
         console.log("masiveState state", json, "currentState", currentState);
         socket.emit("state", json);
-    } else if (value == "Solucionado" && ["Em Tratamento", "Falha de Sistema", "Novo", "Reconhecido", "Alarme Falso"].includes(currentState)) {
+    } else if (value == "Concluído" && ["Em Atendimento Técnico", "Falha de Sistema", "Não tratado", "Alarme Falso"].includes(currentState)) {
         json.resolution_time = localtimeString;
-        json.comment += "Evento solucionado em massa";
+        json.comment += "Evento concluído em massa";
         console.log("masiveState state", json, "currentState", currentState);
         socket.emit("state", json);
     }
@@ -712,7 +1083,7 @@ function filter() {
             if (f1 && f2 && f3 && f4 && td3) {
                 txtValue = td3.textContent || td3.innerText;
 
-                if (txtValue == "Novo" || txtValue == "Em Tratamento") {
+                if (txtValue == "Não tratado" || txtValue == "Em Atendimento Técnico") {
                     activeIncidents++;
                 }
 

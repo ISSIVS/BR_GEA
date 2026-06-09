@@ -392,7 +392,92 @@ body {
 
 
 .triangle {
-  color: #f00;
+  color: #ff8c00;
+}
+
+/* Alarm row colors by event type */
+tr.alarm-perda-sinal td               { background-color: rgba(255,206,0,0.32); }
+tr.alarm-perda-sinal td:first-child   { border-left: 5px solid #ffce00; }
+
+tr.alarm-intrusao td                  { background-color: rgba(244,33,46,0.32); }
+tr.alarm-intrusao td:first-child      { border-left: 5px solid #ff1f29; }
+
+tr.alarm-sekron td                    { background-color: rgba(0,145,255,0.32); }
+tr.alarm-sekron td:first-child        { border-left: 5px solid #0091ff; }
+
+/* Bell icon — new events notification */
+#newEvents { color: #e53935 !important; }
+
+/* Checklist */
+#checklistArea {
+  margin-top: 0.75em;
+  padding: 0.5em 0.75em;
+  border-top: 1px solid rgba(255,255,255,0.1);
+}
+#checklistArea .checklist-title {
+  font-weight: 700;
+  font-size: 0.85em;
+  margin-bottom: 0.5em;
+  color: #ccc;
+}
+#checklistArea .checklist-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8em;
+  margin-bottom: 0.4em;
+  gap: 0.5em;
+}
+#checklistArea .checklist-item span {
+  flex: 1;
+}
+#checklistArea .checklist-options {
+  display: flex;
+  gap: 0.75em;
+}
+#checklistArea .checklist-options label {
+  display: flex;
+  align-items: center;
+  gap: 0.2em;
+  cursor: pointer;
+  font-weight: 600;
+}
+#checklistArea .checklist-options input[type=radio] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 0.95em;
+  height: 0.95em;
+  border: 2px solid #888;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  position: relative;
+  top: 0.05em;
+  transition: border-color 0.15s, background 0.15s;
+}
+#checklistArea .checklist-options input[type=radio]:checked {
+  border-color: #4fc3f7;
+  background: #4fc3f7;
+  box-shadow: inset 0 0 0 2px #1a2a3a;
+}
+#checklistArea .checklist-options input[type=radio]:disabled {
+  cursor: default;
+}
+#checklistArea .checklist-options input[type=radio]:disabled:not(:checked) {
+  border-color: #555;
+  opacity: 0.5;
+}
+#checklistArea .checklist-options label:has(input[type=radio]:disabled) {
+  cursor: default;
+}
+#checklistArea .checklist-options label:has(input[type=radio]:disabled:not(:checked)) {
+  opacity: 0.5;
+}
+#checklistArea .checklist-options label:has(input[type=radio]:disabled:checked) {
+  color: #4fc3f7;
+  font-weight: 700;
+  opacity: 1;
 }
 
 .navbar-dark .navbar-text {
@@ -652,14 +737,14 @@ thead [data-field*="id_obj"], tbody td[id*="object_id"]{
   width: 80px;
 }
 thead [data-field*="name"], tbody td[id*="name"]{
-  width: 200px; 
+  width: 200px;
 }
 thead [data-field*="event"], tbody td[id*="incident"]{
   width: 200px;
 }
 thead [data-field*="time"], tbody td[id*="time"]{
   width: 150px;
-} 
+}
 thead [data-field*="state"], tbody td[id*="state"]{
   width: 140px;
 }

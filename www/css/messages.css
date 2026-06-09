@@ -250,3 +250,35 @@ img {
   background: #092d4c;
   color: white;
 }
+
+.status-event {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3em;
+  padding: 0.25em 0.6em;
+  margin-bottom: 0.3em;
+  border-left: 3px solid #2C6FAC;
+  background: rgba(44,111,172,0.08);
+  border-radius: 0 4px 4px 0;
+  flex-wrap: wrap;
+}
+
+.status-event-label {
+  font-size: 0.95em;
+  font-weight: 700;
+  color: #2C6FAC;
+  white-space: nowrap;
+}
+
+.status-event-note {
+  font-size: 0.9em;
+  color: #ccc;
+  flex: 1;
+}
+
+.status-event-meta {
+  font-size: 0.8em;
+  color: #888;
+  white-space: nowrap;
+  margin-left: auto;
+}

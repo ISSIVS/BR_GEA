@@ -48,7 +48,10 @@
                 </ul>
                 <span class="navbar-text newEvents" onclick="cancelFilter()" id="newEvents"></span>
                 <span class="navbar-text activeIncidents" id="activeIncidents"></span>
-                <span class="navbar-text user" style="color: rgba(255, 255, 255, 0.5)" id="test"> Usuário Externo</span>
+                <span class="navbar-text user" style="color: rgba(255, 255, 255, 0.5); margin-right: .75rem" id="test"> Usuário Externo</span>
+                <a href="/logout" id="logoutBtn" class="btn btn-sm btn-outline-secondary" style="color:rgba(255,255,255,.6); border-color:rgba(255,255,255,.2); font-size:.8rem">
+                    <i class="fa fa-sign-out" aria-hidden="true"></i> Sair
+                </a>
             </div>
         </nav>
         <!-- ALERTS-->
@@ -82,11 +85,9 @@
                     id="filterbystate"
                 >
                     <option selected="selected" value="All">Todos os estados</option>
-                    <option value="Novo">Novo</option>
-                    <option value="Reconhecido">Reconhecido</option>
-                    <option value="Em Tratamento">Em Tratamento</option>
-                    <option value="Solucionado">Solucionado</option>
-                    <option value="Falha de Sistema">Falha de Sistema</option>
+                    <option value="Não tratado">Não tratado</option>
+                    <option value="Em Atendimento Técnico">Em Atendimento Técnico</option>
+                    <option value="Concluído">Concluído</option>
                     <option value="Alarme Falso">Alarme Falso</option>
                 </select>
             </div>
@@ -109,7 +110,7 @@
                     <thead>
                         <tr class="clickable-row">
                             <th hidden="true" data-field="id"></th>
-                            <th data-field="selection">
+                            <th data-field="selection" style="display:none">
                                 <i
                                     id="seleccionarTodos"
                                     class="fa fa-check-square fa_header icono-clickeable"
@@ -132,11 +133,11 @@
                                 <span style="opacity: 0; position: absolute">Operador</span>
                                 <i class="fa fa-user fa_header" aria-hidden="true"></i>
                             </th>
-                            <th data-field="response_time" class="to_hide">
+                            <th data-field="response_time" class="to_hide" style="display:none">
                                 <span style="opacity: 0; position: absolute; font-size: 0">Hora de Resposta</span>
                                 <i title="1" id="check1" class="fa-solid fa-check fa_header icono-boton" onclick="check1()"></i>
                             </th>
-                            <th data-field="resolution_time" class="to_hide">
+                            <th data-field="resolution_time" class="to_hide" style="display:none">
                                 <span style="opacity: 0; position: absolute; font-size: 0">Hora de Resolução</span>
                                 <i title="2" id="check2" class="fa-solid fa_header fa-check-double icono-boton" onclick="check2()"></i>
                             </th>
@@ -159,7 +160,7 @@
                         <div class="col-md-10 card-title">
                             <h5>
                                 <span class="align-top" id="card_priority"></span> Incidente <span id="card_title"></span> -
-                                <span class="align-top" id="card_state">Novo</span>
+                                <span class="align-top" id="card_state">Não tratado</span>
                             </h5>
                             <span class="align-top" id="card_incidentDate"></span>
                             <span class="align-top" id="card_incidentTime"></span>
@@ -173,9 +174,8 @@
                         </div>
                         <div class="col-md-12">
                             <div class="btn-group play">
-                                <button class="btn btn-success" onclick="play()" type="button"><i class="fa fa-play"></i></button>
                                 <button class="btn btn-primary" onclick="live()" type="button">
-                                    <i class="fa fa-video-camera" aria-hidden="true"></i>
+                                    <i class="fa fa-camera" aria-hidden="true"></i>
                                 </button>
                                 <button
                                     class="btn btn-info dropdown-toggle"
@@ -189,10 +189,8 @@
                                         <!-- Submenu State -->
                                         <a class="dropdown-menu dropdown-toggle" href="#" data-toggle="dropdown">Mudar Estado</a>
                                         <div class="dropdown-submenu">
-                                            <a class="dropdown-item" href="#">Reconhecido</a>
-                                            <a class="dropdown-item" href="#">Em Tratamento</a>
-                                            <a class="dropdown-item" href="#">Solucionado</a>
-                                            <a class="dropdown-item" href="#">Falha de Sistema</a>
+                                            <a class="dropdown-item" href="#">Em Atendimento Técnico</a>
+                                            <a class="dropdown-item" href="#">Concluído</a>
                                             <a class="dropdown-item" href="#">Alarme Falso</a>
                                         </div>
                                     </ul>
@@ -222,6 +220,17 @@
                     <div class="col-md-12">
                         <div class="inbox_chat" id="inbox_chat"></div>
                     </div>
+                    <div class="col-md-12" id="checklistArea" style="display:none">
+                        <div id="checklistContent"></div>
+                        <div id="checklistActions" style="text-align:right; margin-top:0.4em; display:flex; gap:0.4em; justify-content:flex-end">
+                            <button class="btn btn-sm btn-warning" onclick="saveChecklist()">
+                                <i class="fa fa-save"></i> Salvar
+                            </button>
+                            <button class="btn btn-sm btn-success" id="btnConcluir" onclick="state('Concluído')" disabled>
+                                <i class="fa fa-check"></i> Concluir
+                            </button>
+                        </div>
+                    </div>
                     <!-- Comments-->
                     <div class="row">
                         <div class="col-md-12"><span class="align-top incident-head">Comentário: </span></div>
@@ -233,7 +242,7 @@
                         </div>
                         <div class="col-md-1">
                             <div class="form-row align-items-center">
-                                <button class="btn form-send btn-success" onclick="state('Em Tratamento')">
+                                <button class="btn form-send btn-success" onclick="addComment()">
                                     <i class="fa fa-arrow-right" aria-hidden="true"></i>
                                 </button>
                             </div>
